@@ -1,1 +1,1 @@
-# telegram-ai-resumidor
+# telegram-bot-finance

@@ -1,5 +1,6 @@
 import os
 import asyncio
+from datetime import datetime
 from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
@@ -13,29 +14,40 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🔍 Consultando el fondo indexado...")
     
     try:
-        # Ticker de Yahoo Finance para el fondo (Morningstar ID + sufijo .F)
         ticker_symbol = "0P00011HBM.F"
         fondo = yf.Ticker(ticker_symbol)
         
-        # Pedimos un historial de 10 días para garantizar que obtenemos al menos 2 días con cotización válida
+        # Historial de los últimos 10 días para asegurar registros
         historial = fondo.history(period="10d")
         
         if len(historial) >= 2:
-            # Extraer datos del último día con registro
+            # 1. Extraer el nombre del fondo (con fallback si la API no lo trae)
+            info_fondo = fondo.info
+            nombre_fondo = info_fondo.get('longName') or info_fondo.get('shortName') or "Vanguard Global Stock Index Fund"
+            moneda = info_fondo.get('currency', 'EUR')
+            
+            # 2. Extraer precios y fechas
             precio_actual = historial['Close'].iloc[-1]
-            fecha_actual = historial.index[-1].strftime('%Y-%m-%d')
+            fecha_actual_dt = historial.index[-1]
             
-            # Extraer datos del día anterior con registro disponible
             precio_anterior = historial['Close'].iloc[-2]
-            fecha_anterior = historial.index[-2].strftime('%Y-%m-%d')
+            fecha_anterior_dt = historial.index[-2]
             
-            # Calcular diferencias
+            # Formatear fechas a DD/MM/YYYY
+            fecha_actual_str = fecha_actual_dt.strftime('%d/%m/%Y')
+            fecha_anterior_str = fecha_anterior_dt.strftime('%d/%m/%Y')
+            
+            # 3. Comprobar si está actualizado al día de hoy
+            hoy_str = datetime.now().strftime('%d/%m/%Y')
+            if fecha_actual_str == hoy_str:
+                estado_actualizacion = "✅ **El precio está actualizado al día de hoy.**"
+            else:
+                estado_actualizacion = f"⏳ **Precio pendiente de actualización** (Último dato disponible: {fecha_actual_str})."
+            
+            # 4. Cálculo de diferencias y porcentajes
             diferencia = precio_actual - precio_anterior
             porcentaje = (diferencia / precio_anterior) * 100
             
-            moneda = fondo.info.get('currency', 'EUR')
-            
-            # Lógica para asignar emojis y colores visuales según la tendencia
             if diferencia >= 0:
                 icono = "🟢"
                 tendencia = "📈 Sube"
@@ -43,29 +55,20 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 icono = "🔴"
                 tendencia = "📉 Baja"
-                signo = "" # El número negativo ya incluye su propio signo "-"
+                signo = ""
             
+            # 5. Construcción del mensaje para Telegram
             mensaje = (
                 f"💼 **ESTADO DEL FONDO INDEXADO**\n\n"
-                f"🆔 **ID Morningstar:** `0P00011HBM`\n"
-                f"📅 **Fecha:** {fecha_actual}\n"
+                f"🏦 **Fondo:** {nombre_fondo} (`0P00011HBM`)\n"
+                f"📅 **Fecha del precio:** {fecha_actual_str}\n"
                 f"💰 **NAV Actual:** *{precio_actual:.2f} {moneda}*\n"
-                f"⏮️ **Día anterior:** {fecha_anterior}\n"
-                f"{icono} **Variación:** {tendencia} ({signo}{diferencia:.2f} {moneda} | {signo}{porcentaje:.2f}%)"
-            )
-        elif len(historial) == 1:
-            precio_actual = historial['Close'].iloc[-1]
-            fecha_actual = historial.index[-1].strftime('%Y-%m-%d')
-            moneda = fondo.info.get('currency', 'EUR')
-            mensaje = (
-                f"💼 **ESTADO DEL FONDO INDEXADO**\n\n"
-                f"🆔 **ID Morningstar:** `0P00011HBM`\n"
-                f"📅 **Fecha:** {fecha_actual}\n"
-                f"💰 **NAV Actual:** *{precio_actual:.2f} {moneda}*\n"
-                f"⚠️ Hay un único registro disponible, no se puede calcular la diferencia."
+                f"⏮️ **Día anterior registrado:** {fecha_anterior_str}\n"
+                f"{icono} **Variación:** {tendencia} ({signo}{diferencia:.2f} {moneda} | {signo}{porcentaje:.2f}%)\n\n"
+                f"ℹ️ {estado_actualizacion}"
             )
         else:
-            mensaje = "⚠️ No se han encontrado datos recientes para este fondo en Yahoo Finance."
+            mensaje = "⚠️ No se han encontrado datos suficientes para este fondo en Yahoo Finance."
             
     except Exception as e:
         mensaje = f"❌ Ocurrió un error al obtener la información financiera: `{str(e)}`"
@@ -75,10 +78,9 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def main():
     app = Application.builder().token(BOT_TOKEN).build()
 
-    # Registramos el comando /status basado en la estructura inicial del bot[cite: 1]
     app.add_handler(CommandHandler("status", status))
 
-    print("Bot iniciado con diseño visual avanzado. Esperando el comando /status...")
+    print("Bot iniciado con formato personalizado. Esperando el comando /status...")
 
     await app.initialize()
     await app.start()
